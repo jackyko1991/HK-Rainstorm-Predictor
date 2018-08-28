@@ -4,14 +4,18 @@ from urllib.parse import urlsplit, urlunsplit
 import datetime
 from bs4 import BeautifulSoup
 import re
+import csv
 import os
 
 class RainDataCrawler():
 	def __init__(self, url="", saveDir=""):
 		self.url = url
 		self.saveDir = saveDir
+		self.crawlTemp = True
+		self.crawlRain = True
+		self.crawlSignal = True
 
-	def crawlTemp(self,reportString):
+	def crawlTempWorker(self,reportString):
 		reportStrings = re.split('\s{2,}',reportString)
 		reportList = re.sub("[^\w]", " ",  reportStrings[1]).split()
 		tempIdx = reportList.index("DEGREES")-1
@@ -42,7 +46,7 @@ class RainDataCrawler():
 			
 		return tempDict
 
-	def crawlRain(self,reportString):
+	def crawlRainWorker(self,reportString):
 		reportStrings = re.split('\s{2,}|\n',reportString)
 		
 		locations = ['NORTH DISTRICT',\
@@ -98,7 +102,6 @@ class RainDataCrawler():
 		return rainDict
 
 	def crawlHourlyReadings(self,url):
-		# print(url)
 		resp = requests.get(url)
 		soup = BeautifulSoup(resp.text,"lxml")
 		report = soup.find_all("div",id="weather_report")[0]
@@ -106,16 +109,34 @@ class RainDataCrawler():
 			br.replace_with("\n")
 
 		reportString = str(report.text)
-		tempDict = self.crawlTemp(reportString)
-		rainDict = self.crawlRain(reportString)
 
-		# save data
-
-
-		# print(tempDict)
-		print(rainDict)
-
-
+		if self.crawlTemp:
+			tempDict = self.crawlTempWorker(reportString)
+			fieldnames = ['DATE', 'TIME']
+			for key,value in tempDict.items():
+				if (key!= 'DATE' and key!='TIME'):
+					fieldnames.append(key)
+			# save data
+			if not os.path.exists(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv')):
+				with open(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'), 'w',newline='') as csv_file:
+					
+					writer = csv.DictWriter(csv_file,fieldnames=fieldnames)
+					writer.writeheader()
+					writer.writerow(tempDict)
+			else:
+				df = pd.read_csv(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'))
+				tempDf = pd.DataFrame(tempDict, index=[0])
+				# print(tempDf)
+				df = pd.concat([df,tempDf])
+				df.drop_duplicates(subset=["DATE", "TIME"],inplace=True)
+				df = df[fieldnames]
+				# df.set_index(["DATE", "TIME"])
+				# print(df)
+				# exit()
+				df.to_csv(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'), index=False)
+		
+		if self.crawlRain:
+			rainDict = self.crawlRainWorker(reportString)
 
 		return
 
@@ -141,12 +162,15 @@ class RainDataCrawler():
 				hourUrl[2] = li.a.get('href')
 				hourUrl = urlunsplit(hourUrl)
 				self.crawlHourlyReadings(hourUrl)
-				exit()
+				# exit()
 			elif "RAINSTORM WARNING SIGNAL" in li.text:
 				signalUrl = list(urlsplit(self.url))
 				signalUrl[2] = li.a.get('href')
 				signalUrl = urlunsplit(signalUrl)
-				self.crawlRainstormWarningSignal(signalUrl)
+				if self.crawlSignal:
+					self.crawlRainstormWarningSignal(signalUrl)
+				else:
+					continue
 
 def main():
 	# data url
@@ -171,7 +195,11 @@ def main():
 	crawler = RainDataCrawler()
 	crawler.saveDir = saveDir
 
-	while dateTime.strftime("%Y-%m-%d") != endDateTime.strftime("%Y-%m-%d"): # better to compare with strings
+	dayCount = 0;
+	while dateTime.strftime("%Y-%m-%d") != (endDateTime+datetime.timedelta(days=1)).strftime("%Y-%m-%d"): # better to compare with strings
+		print("Crawling temperature and rainfall data in progress: %d/%d"%(dayCount+1,(endDateTime-startDateTime).days+1))
+		# exit()
+
 		path = "gia/wr/"+dateTime.strftime("%Y%m")+"/"+dateTime.strftime("%d") + ".htm"
 		parsed[2] = path
 		currentUrl = urlunsplit(parsed)
@@ -180,6 +208,7 @@ def main():
 		crawler.url = currentUrl
 		crawler.crawl()
 		dateTime = dateTime+datetime.timedelta(days=1)
+		dayCount = dayCount+1
 
 if __name__=="__main__":
 	main()
