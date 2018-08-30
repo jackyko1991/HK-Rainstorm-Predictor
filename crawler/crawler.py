@@ -18,9 +18,20 @@ class RainDataCrawler():
 	def crawlTempWorker(self,reportString):
 		reportStrings = re.split('\s{2,}',reportString)
 		reportList = re.sub("[^\w]", " ",  reportStrings[1]).split()
-		tempIdx = reportList.index("DEGREES")-1
 
 		tempDict = {}
+		if reportList[2] == "A":
+			time = int(reportList[1])
+		elif reportList[2] == "P":
+			time = int(reportList[1])+12
+		if reportList[1] == "NOON":
+			time = 12
+		elif reportList[1] == "MIDNIGHT":
+			time = 0
+
+		tempDict['TIME'] = time
+
+		tempIdx = reportList.index("DEGREES")-1
 		tempDict['HONG KONG OBSERVATORY'] = int(reportList[tempIdx])
 
 		reportStrings = re.split('\s{2,}|\n',reportString)
@@ -35,14 +46,6 @@ class RainDataCrawler():
 			if crawl and ("DEGREES" in string):
 				tempDict[location] = int(re.sub("[^\w]", " ",  string).split()[0])
 			location = string
-
-			if "DISPATCHED BY" in string:
-				time = string.split(" ")[6]
-				date = string.split(" ")[9]
-
-				dateTime = datetime.datetime.strptime(date + " " + time,"%d.%m.%Y %H:%M")
-				tempDict['DATE'] = dateTime.strftime("%Y-%m-%d")
-				tempDict['TIME'] = dateTime.strftime("%H:%M")
 			
 		return tempDict
 
@@ -112,6 +115,7 @@ class RainDataCrawler():
 
 		if self.crawlTemp:
 			tempDict = self.crawlTempWorker(reportString)
+			tempDict['DATE'] = datetime.datetime.strptime(url.split("/")[5]+url.split("/")[6],"%Y%m%d").strftime("%Y-%m-%d")
 			fieldnames = ['DATE', 'TIME']
 			for key,value in tempDict.items():
 				if (key!= 'DATE' and key!='TIME'):
@@ -126,7 +130,6 @@ class RainDataCrawler():
 			else:
 				df = pd.read_csv(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'))
 				tempDf = pd.DataFrame(tempDict, index=[0])
-				# print(tempDf)
 				df = pd.concat([df,tempDf])
 				df.drop_duplicates(subset=["DATE", "TIME"],inplace=True)
 				df = df[fieldnames]
@@ -179,7 +182,7 @@ def main():
 	# output directory
 	saveDir = "./data"
 
-	startDate = "2018-08-27" #%Y-%m-%d %H, up to date is enough, start date should be at least one date earlier than end date
+	startDate = "2018-08-28" #%Y-%m-%d %H, up to date is enough, start date should be at least one date earlier than end date
 	endDate = "Now" #%Y-%m-%d %H or "Now"
 
 	startDateTime = datetime.datetime.strptime(startDate,"%Y-%m-%d")
@@ -190,13 +193,15 @@ def main():
 
 	parsed = list(urlsplit(url))
 
-	dateTime = startDateTime
+	dateTime = endDateTime
 
 	crawler = RainDataCrawler()
 	crawler.saveDir = saveDir
 
 	dayCount = 0;
-	while dateTime.strftime("%Y-%m-%d") != (endDateTime+datetime.timedelta(days=1)).strftime("%Y-%m-%d"): # better to compare with strings
+	while dateTime.strftime("%Y-%m-%d") != (startDateTime-datetime.timedelta(days=1)).strftime("%Y-%m-%d"): # better to compare with strings
+		print(dateTime)
+		print(startDateTime-datetime.timedelta(days=1))
 		print("Crawling temperature and rainfall data in progress: %d/%d"%(dayCount+1,(endDateTime-startDateTime).days+1))
 		# exit()
 
@@ -207,7 +212,7 @@ def main():
 		# actual crawl the data
 		crawler.url = currentUrl
 		crawler.crawl()
-		dateTime = dateTime+datetime.timedelta(days=1)
+		dateTime = dateTime-datetime.timedelta(days=1)
 		dayCount = dayCount+1
 
 if __name__=="__main__":
