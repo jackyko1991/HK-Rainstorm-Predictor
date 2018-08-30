@@ -17,28 +17,26 @@ class RainDataCrawler():
 
 	def crawlTempWorker(self,reportString):
 		reportStrings = re.split('\s{2,}',reportString)
-		reportList = re.sub("[^\w]", " ",  reportStrings[1]).split()
-
 		tempDict = {}
-		if reportList[2] == "A":
-			time = int(reportList[1])
-		elif reportList[2] == "P":
-			time = int(reportList[1])+12
-		if reportList[1] == "NOON":
-			time = 12
-		elif reportList[1] == "MIDNIGHT":
-			time = 0
 
-		tempDict['TIME'] = time
-
-		tempIdx = reportList.index("DEGREES")-1
-		tempDict['HONG KONG OBSERVATORY'] = int(reportList[tempIdx])
-
-		reportStrings = re.split('\s{2,}|\n',reportString)
-	
 		crawl = False
 		location = ""
 		for string in reportStrings: 
+			if "HONG KONG OBSERVATORY" in string:
+				reportList = re.sub("[^\w]", " ",  string).split()
+				if reportList[2] == "A":
+					time = int(reportList[1])
+				elif reportList[2] == "P":
+					time = int(reportList[1])+12
+				elif reportList[1] == "NOON":
+					time = 12
+				elif reportList[1] == "MIDNIGHT":
+					time = 0
+				tempDict['TIME'] = time
+
+				tempIdx = reportList.index("DEGREES")-1
+				tempDict['HONG KONG OBSERVATORY'] = int(reportList[tempIdx])
+
 			if string == "THE AIR TEMPERATURES AT OTHER PLACES WERE:":
 				crawl = True 
 			if "DEGREES." in string:
@@ -51,7 +49,7 @@ class RainDataCrawler():
 
 	def crawlRainWorker(self,reportString):
 		reportStrings = re.split('\s{2,}|\n',reportString)
-		
+		rainDict = {}
 		locations = ['NORTH DISTRICT',\
 			'YUEN LONG', \
 			'TUEN MUN',\
@@ -68,19 +66,30 @@ class RainDataCrawler():
 			'KOWLOON CITY',\
 			'KWUN TONG',\
 			'EASTERN DISTRICT',\
-			'SOUTHERN DISTRICT',\
+			'SOUTHERN DIS8R15T',\
 			'WAN CHAI']
-		rainDict = {}
+		# 
+		rainDict['RAINSTORM SIGNAL ISSUING AT DISPATCH'] = 'NO'
 
 		for location in locations:
-			rainDict[location] = [0,0]
-
-		rainDict['RAINSTORM SIGNAL ISSUED'] = 'NO'
+			rainDict[location+" MIN"] = 0
+			rainDict[location+" MAX"] = 0
 
 		crawl = False
 		location = ""
 		for string in reportStrings: 
-			# print(string)
+			if "HONG KONG OBSERVATORY" in string:
+				reportList = re.sub("[^\w]", " ", string).split()
+				if reportList[2] == "A":
+					time = int(reportList[1])
+				elif reportList[2] == "P":
+					time = int(reportList[1])+12
+				elif reportList[1] == "NOON":
+					time = 12
+				elif reportList[1] == "MIDNIGHT":
+					time = 0
+				rainDict['TIME'] = time
+
 			if "VARIOUS REGIONS WERE:" in string:
 				crawl = True 
 			if "MM." in string:
@@ -89,19 +98,12 @@ class RainDataCrawler():
 				rainRange = [int(s) for s in string.split() if s.isdigit()]
 				if len(rainRange) == 1:
 					rainRange.append(rainRange[0])
-				rainDict[location] = rainRange
+				rainDict[location + " MIN"] = rainRange[0]
+				rainDict[location + " MAX"] = rainRange[1]
 			location = string
 
-			if "DISPATCHED BY" in string:
-				time = string.split(" ")[6]
-				date = string.split(" ")[9]
-
-				dateTime = datetime.datetime.strptime(date + " " + time,"%d.%m.%Y %H:%M")
-				rainDict['DATE'] = dateTime.strftime("%Y-%m-%d")
-				rainDict['TIME'] = dateTime.strftime("%H:%M")
-
 			if "RAINSTORM WARNING SIGNAL" in string:
-				rainDict['RAINSTORM SIGNAL ISSUED'] = string.split(" ")[1]
+				rainDict['RAINSTORM SIGNAL ISSUING AT DISPATCH'] = string.split(" ")[1]
 		return rainDict
 
 	def crawlHourlyReadings(self,url):
@@ -123,7 +125,6 @@ class RainDataCrawler():
 			# save data
 			if not os.path.exists(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv')):
 				with open(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'), 'w',newline='') as csv_file:
-					
 					writer = csv.DictWriter(csv_file,fieldnames=fieldnames)
 					writer.writeheader()
 					writer.writerow(tempDict)
@@ -133,13 +134,29 @@ class RainDataCrawler():
 				df = pd.concat([df,tempDf])
 				df.drop_duplicates(subset=["DATE", "TIME"],inplace=True)
 				df = df[fieldnames]
-				# df.set_index(["DATE", "TIME"])
-				# print(df)
-				# exit()
 				df.to_csv(os.path.join(self.saveDir,'temperature',tempDict['DATE'][:7] + '.csv'), index=False)
 		
 		if self.crawlRain:
 			rainDict = self.crawlRainWorker(reportString)
+
+			rainDict['DATE'] = datetime.datetime.strptime(url.split("/")[5]+url.split("/")[6],"%Y%m%d").strftime("%Y-%m-%d")
+			fieldnames = ['DATE', 'TIME']
+			for key,value in rainDict.items():
+				if (key!= 'DATE' and key!='TIME'):
+					fieldnames.append(key)
+			# save data
+			if not os.path.exists(os.path.join(self.saveDir,'rainfall',rainDict['DATE'][:7] + '.csv')):
+				with open(os.path.join(self.saveDir,'rainfall',rainDict['DATE'][:7] + '.csv'), 'w',newline='') as csv_file:
+					writer = csv.DictWriter(csv_file,fieldnames=fieldnames)
+					writer.writeheader()
+					writer.writerow(rainDict)
+			else:
+				df = pd.read_csv(os.path.join(self.saveDir,'rainfall',rainDict['DATE'][:7] + '.csv'))
+				rainDf = pd.DataFrame(rainDict, index=[0])
+				df = pd.concat([df,rainDf])
+				df.drop_duplicates(subset=["DATE", "TIME"],inplace=True)
+				df = df[fieldnames]
+				df.to_csv(os.path.join(self.saveDir,'rainfall',rainDict['DATE'][:7] + '.csv'), index=False)
 
 		return
 
@@ -148,12 +165,11 @@ class RainDataCrawler():
 
 	def crawl(self):
 		# create save folder
-
-		if not os.path.exists(os.path.join(self.saveDir,'temperature')):
+		if (not os.path.exists(os.path.join(self.saveDir,'temperature')) and self.crawlTemp):
 			os.makedirs(os.path.join(self.saveDir,'temperature'))
-		if not os.path.exists(os.path.join(self.saveDir,'rainfall')):
+		if (not os.path.exists(os.path.join(self.saveDir,'rainfall')) and self.crawlRain):
 			os.makedirs(os.path.join(self.saveDir,'rainfall'))
-		if not os.path.exists(os.path.join(self.saveDir,'rainstorm')):
+		if (not os.path.exists(os.path.join(self.saveDir,'rainstorm')) and self.crawlSignal):
 			os.makedirs(os.path.join(self.saveDir,'rainstorm'))
 
 		resp = requests.get(self.url)
@@ -182,11 +198,12 @@ def main():
 	# output directory
 	saveDir = "./data"
 
-	startDate = "2018-08-28" #%Y-%m-%d %H, up to date is enough, start date should be at least one date earlier than end date
-	endDate = "Now" #%Y-%m-%d %H or "Now"
+	startDate = "2018-07-01" #%Y-%m-%d, up to date is enough, latest start date should be the end date
+	# endDate = "2018-08-15" #%Y-%m-%d, up to date is enough, latest start date should be the end date
+	endDate = "Today" #%Y-%m-%d or "Today"
 
 	startDateTime = datetime.datetime.strptime(startDate,"%Y-%m-%d")
-	if endDate == "Now":
+	if endDate == "Today":
 		endDateTime = datetime.datetime.now().replace(microsecond=0)
 	else:
 		endDateTime = datetime.datetime.strptime(endDate,"%Y-%m-%d")
@@ -200,9 +217,7 @@ def main():
 
 	dayCount = 0;
 	while dateTime.strftime("%Y-%m-%d") != (startDateTime-datetime.timedelta(days=1)).strftime("%Y-%m-%d"): # better to compare with strings
-		print(dateTime)
-		print(startDateTime-datetime.timedelta(days=1))
-		print("Crawling temperature and rainfall data in progress: %d/%d"%(dayCount+1,(endDateTime-startDateTime).days+1))
+		print("Crawling temperature and rainfall data in progress: %d/%d (%s)"%(dayCount+1,(endDateTime-startDateTime).days+1,dateTime.strftime("%Y-%m-%d")))
 		# exit()
 
 		path = "gia/wr/"+dateTime.strftime("%Y%m")+"/"+dateTime.strftime("%d") + ".htm"
@@ -211,6 +226,9 @@ def main():
 
 		# actual crawl the data
 		crawler.url = currentUrl
+		crawler.crawlTemp = False
+		crawler.crawlRain = True
+		crawler.crawlSignal = False
 		crawler.crawl()
 		dateTime = dateTime-datetime.timedelta(days=1)
 		dayCount = dayCount+1
